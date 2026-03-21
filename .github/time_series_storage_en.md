@@ -588,3 +588,126 @@ A commercial database for high-frequency data analysis, popular in finance and t
 #### Sources
 - https://kx.com/
 - https://en.wikipedia.org/wiki/Kdb%2B
+
+## 5. Binary data serialized to text
+
+This technique is a powerful tool, especially in IoT architectures (e.g., in LoRaWAN or Sigfox networks) and wherever time- and space-optimized binary structures need to be "pushed" through an API that strictly accepts only text (like classic REST JSON endpoints).
+
+---
+
+### 5.1 Protocol Buffers (Protobuf)
+
+#### Description
+A binary data serialization format developed by Google, widely used in communication between microservices (e.g., gRPC) and in IoT systems. It requires defining a strict data schema in a `.proto` file, which is then used to generate read and write code for the chosen programming language.
+
+#### Example
+Since the data is binary, the transmitted byte stream itself is unreadable (e.g., as `08 a0 8d` ...). However, the foundation is the schema file defining the structure.
+The `sensor.proto` file:
+
+```proto
+syntax = "proto3";
+
+message DataPoint {
+  int64 timestamp = 1;
+  float value = 2;
+  string device_id = 3;
+}
+```
+
+#### Pros
+- Strict typing: The structure is known upfront and validated, which prevents many bugs in distributed applications.
+- High spatial compression: Significantly smaller message size compared to JSON or XML because key names (e.g., "timestamp") are not transmitted—they are replaced by short, numeric identifiers defined in the schema (e.g., 1, 2).
+- Compatibility: Allows adding new fields to the schema without breaking older clients (backward and forward compatibility).
+
+#### Cons
+- Lack of readability: Without the `.proto` file, the data is completely unreadable.
+- Implementation overhead: Requires a schema compilation step (the `protoc` tool), which hinders rapid prototyping.
+- Lack of ad-hoc flexibility: Difficult to use in systems where the data structure changes frequently and dynamically.
+
+#### Sources
+- https://protobuf.dev/
+- https://en.wikipedia.org/wiki/Protocol_Buffers
+- https://github.com/protocolbuffers/protobuf
+
+---
+
+### 5.2 MessagePack
+
+#### Description
+MessagePack bills itself as "efficient as binary structures, convenient as JSON." It is a serialization format that allows exchanging structural data between different languages without requiring prior schema definitions.
+
+#### Example
+MessagePack maps structures similar to JSON into a compressed byte stream.
+JSON equivalent: `{"temp": 22.5}`
+In hexadecimal notation (Hex), MessagePack will generate, for example:
+`81 a4 74 65 6d 70 cb 40 36 80 00 00 00 00 00`
+Where `81` means a map with 1 element, `a4` is a string of length 4, followed by ASCII codes for "temp", and `cb` means a 64-bit float, followed by the value `22.5`.
+
+#### Pros
+- Schemaless: Works on the same principle as JSON, allowing the insertion of arbitrary keys "on the fly."
+- Extremely simple migration: In many languages (e.g., Python, Node.js), transitioning from JSON format only requires swapping the library and changing the packing function (e.g., `json.dumps()` to `msgpack.packb()`).
+- Native binary types: Support for inserting raw byte arrays without the need to encode them to Base64 (which is a nightmare in JSON).
+
+#### Cons
+- Larger size than Protobuf: Because key names are transmitted along with the data in every record, payloads are larger than in schema-based formats.
+- Slower parsing: The decoder has to read the structure and keys on the fly, which imposes some CPU cost (though still significantly lower than for text).
+
+#### Sources
+- https://msgpack.org/
+- https://github.com/msgpack/msgpack
+
+---
+
+### 5.3 CBOR (Concise Binary Object Representation)
+
+#### Description
+A format standardized by the IETF (RFC 8949) designed specifically for devices with extremely limited resources (e.g., battery-powered microcontrollers in IoT networks). It works similarly to MessagePack but emphasizes internet standards.
+
+#### Example
+Just like in MessagePack, ad-hoc structures are converted into concise bytes.
+For the JSON equivalent `{"t": 1710681600}`, the Hex dump in CBOR would look something like this:
+`a1 61 74 1a 65 f6 d1 80`
+(`a1` - map, `61` - string "t", `1a` - 32-bit integer, followed by the UNIX epoch time).
+
+#### Pros
+- IETF Internet Standard: Independent of a single vendor or company, providing a stable protocol for long-term deployments.
+- Minimalist decoder: The code overhead (Flash/RAM memory footprint) needed on a microcontroller to handle CBOR is small enough to be suitable for the smallest chips.
+- Semantic tags: Allows for native data type tagging from a higher level (e.g., directly tagging bytes as a "date and time timestamp" without parsing from strings).
+
+#### Cons
+- Lack of structured key compression: Like JSON/MessagePack, it repeats key names in arrays if the structure is not designed manually (e.g., transmitting just the array of values without keys).
+- Lower popularity in analytics: Great for transport from IoT, but poorly supported in large Big Data systems.
+
+#### Sources
+- https://cbor.io/
+- https://datatracker.ietf.org/doc/html/rfc8949
+
+---
+
+### 5.4 FlatBuffers
+
+#### Description
+Solves one of the main problems of other formats: the requirement to unpack (deserialize) all data into RAM beforehand to be able to read anything from it. It allows direct access to serialized bytes.
+
+#### Example
+Similar to Protobuf, it requires a schema, but this time with an `.fbs` extension.
+```fbs
+table DataPoint {
+  timestamp: long;
+  value: float;
+}
+root_type DataPoint;
+```
+
+#### Pros
+- Zero-copy (No deserialization): You can read a specific point from a time series directly from the byte stream. This causes a drastic decrease in RAM consumption.
+- Maximum read performance: Significantly faster data access time compared to Protobuf or MessagePack.
+- Strict typing: Has a schema, which guarantees the consistency of structural data.
+
+#### Cons
+- Larger binary file size: FlatBuffers uses "padding" (memory alignment) and offsets to enable zero-copy reads. This makes the resulting files larger than in the concise Protobuf.
+- Harder to use API: Writing code using FlatBuffers (so-called bottom-up buffer building) can be unintuitive for developers compared to simply assigning values to objects.
+
+#### Sources
+- https://flatbuffers.dev/
+- https://github.com/google/flatbuffers

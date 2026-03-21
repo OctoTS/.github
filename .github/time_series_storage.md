@@ -589,3 +589,129 @@ Baza danych komercyjna do analizy danych wysokiej częstotliwości, popularna w 
 #### Źródła
 - https://kx.com/
 - https://en.wikipedia.org/wiki/Kdb%2B
+
+## 5. Dane binarne serializowane do tekstu
+
+Technika ta jest potężnym narzędziem zwłaszcza w architekturach IoT (np. w sieciach LoRaWAN, Sigfox) oraz wszędzie tam, gdzie zoptymalizowane czasowo i przestrzennie struktury binarne muszą zostać „przepchnięte” przez API akceptujące wyłącznie tekst (jak klasyczne endpointy REST JSON).
+
+---
+
+### 5.1 Protocol Buffers (Protobuf)
+
+#### Opis
+Opracowany przez Google format binarnej serializacji danych, szeroko stosowany w komunikacji między mikrousługami (np. gRPC) oraz w systemach IoT. Wymaga zdefiniowania ścisłego schematu danych w pliku `.proto`, na podstawie którego generowany jest kod do odczytu i zapisu dla wybranego języka programowania.
+
+#### Przykład
+Ponieważ dane są binarne, sam przesyłany ciąg bajtów jest nieczytelny (np. jako `08 a0 8d` ...). Podstawą jest jednak plik schematu definiujący strukturę.
+Plik `sensor.proto`:
+
+```proto
+syntax = "proto3";
+
+message DataPoint {
+  int64 timestamp = 1;
+  float value = 2;
+  string device_id = 3;
+}
+```
+
+#### Zalety
+- Ścisłe typowanie: Struktura jest znana z góry i walidowana, co zapobiega wielu błędom w aplikacjach rozproszonych.
+- Wysoka kompresja przestrzenna: Znacznie mniejszy rozmiar wiadomości w porównaniu do JSON czy XML, ponieważ nazwy kluczy (np. "timestamp") nie są przesyłane – zastępują je krótkie, liczbowe identyfikatory zdefiniowane w schemacie (np. 1, 2).
+- Kompatybilność: Umożliwia dodawanie nowych pól do schematu bez psucia starszych klientów (wsteczna i przyszła kompatybilność).
+
+#### Wady
+- Brak czytelności: Bez pliku .proto dane są całkowicie nieczytelne.
+- Narzut wdrożeniowy: Wymaga kroku kompilacji schematów (narzędzie protoc), co utrudnia szybkie prototypowanie.
+- Brak elastyczności ad-hoc: Trudno używać go w systemach, w których struktura danych często i dynamicznie się zmienia.
+
+#### Źródła
+- https://protobuf.dev/
+- https://en.wikipedia.org/wiki/Protocol_Buffers
+- https://github.com/protocolbuffers/protobuf
+
+---
+
+### 5.2 MessagePack
+
+#### Opis
+MessagePack określa sam siebie jako "wydajny jak struktury binarne, wygodny jak JSON". Jest to format serializacji, który pozwala wymieniać dane strukturalne pomiędzy różnymi językami, nie wymagając przy tym definiowania wcześniejszych schematów.
+
+#### Przykład
+MessagePack mapuje struktury zbieżne z JSON w skompresowany ciąg bajtów.
+Odpowiednik JSON: `{"temp": 22.5}`
+W zapisie szesnastkowym (Hex) MessagePack wygeneruje np.:
+`81 a4 74 65 6d 70 cb 40 36 80 00 00 00 00 00`
+Gdzie `81` oznacza mapę z 1 elementem, `a4` ciąg znaków o długości 4, dalej kody ASCII dla "temp", a `cb` oznacza 64-bitowy float, po którym następuje wartość `22.5.`
+
+#### Zalety
+- Brak wymogu schematu (Schemaless): Działa na takiej samej zasadzie jak JSON, pozwalając na wstawianie dowolnych kluczy "w locie".
+- Ekstremalnie prosta migracja: W wielu językach (np. Python, Node.js) przejście z formatu JSON wymaga jedynie podmiany biblioteki i zmiany funkcji pakującej (np. json.dumps() na msgpack.packb()).
+- Natywne typy binarne: Wsparcie dla wstawiania surowych tablic bajtów bez konieczności kodowania ich do Base64 (co jest zmorą w JSON).
+
+#### Wady
+- Większy rozmiar niż Protobuf: Ze względu na przesyłanie nazw kluczy wraz z danymi w każdym rekordzie, paczki są większe niż w formatach opartych na schemacie.
+
+- Wolniejsze parsowanie: Dekoder musi odczytywać strukturę i klucze w locie, co narzuca pewien koszt procesora (choć wciąż znacznie niższy niż dla tekstu).
+
+#### Źródła
+- https://msgpack.org/
+- https://github.com/msgpack/msgpack
+
+---
+
+### 5.3 CBOR (Concise Binary Object Representation)
+
+#### Opis
+Standaryzowany przez IETF (RFC 8949) format danych zaprojektowany specjalnie pod kątem urządzeń o ekstremalnie ograniczonych zasobach (np. mikrokontrolery zasilane bateryjnie w sieciach IoT). Działa podobnie do MessagePack, ale kładzie nacisk na standardy internetowe.
+
+#### Przykład
+Podobnie jak w MessagePack, struktury ad-hoc są zamieniane na zwięzłe bajty.
+Dla odpowiednika JSON `{"t": 1710681600}`, zrzut Hex w CBOR będzie wyglądał mniej więcej tak:
+`a1 61 74 1a 65 f6 d1 80`
+(`a1` - mapa, `61` - string "t", `1a` - 32-bitowy integer, po którym następuje czas z epoki UNIX).
+
+#### Zalety
+- Standard Internetowy IETF: Niezależny od jednego dostawcy czy firmy, stabilny protokół do długoterminowych wdrożeń.
+- Minimalistyczny dekoder: Narzut kodu (zajętość pamięci Flash/RAM) potrzebnego na mikrokontrolerze do obsługi CBOR jest na tyle mały, że nadaje się dla najmniejszych układów.
+- Tagi semantyczne: Pozwala na natywne oznaczanie typów danych z wyższego poziomu (np. bezpośrednie oznaczenie bajtów jako "znacznik czasu daty i godziny" bez parsowania ze stringów).
+
+#### Wady
+- Brak strukturyzowanej kompresji kluczy: Podobnie jak JSON/MessagePack, powtarza nazwy kluczy w tablicach, jeśli nie zaprojektuje się struktury ręcznie (np. przesyłając samą tablicę wartości bez kluczy).
+- Mniejsza popularność analityczna: Świetny do transportu z IoT, ale słabo wspierany w dużych systemach Big Data.
+
+#### Źródła
+- https://cbor.io/
+- https://datatracker.ietf.org/doc/html/rfc8949
+
+---
+
+### 5.4 FlatBuffers
+
+#### Opis
+Rozwiązuje jeden z głównych problemów innych formatów: wymóg uprzedniego rozpakowania (deserializacji) całości danych do pamięci operacyjnej, aby móc cokolwiek z nich odczytać. Pozwala na bezpośredni dostęp do zserializowanych bajtów.
+
+#### Przykład
+Podobnie jak Protobuf, wymaga schematu, ale tym razem z rozszerzeniem `.fbs`.
+```fbs
+table DataPoint {
+  timestamp: long;
+  value: float;
+}
+root_type DataPoint;
+```
+
+#### Zalety
+- Brak deserializacji (Zero-copy): Możesz odczytać konkretny punkt z szeregu czasowego bezpośrednio ze strumienia bajtów. Powoduje to drastyczny spadek zużycia pamięci RAM.
+- Maksymalna wydajność odczytu: Znacznie szybszy czas dostępu do danych niż w przypadku Protobuf czy MessagePack.
+- Ścisłe typowanie: Posiada schemat, co gwarantuje spójność danych strukturalnych.
+
+#### Wady
+- Większy rozmiar pliku binarnego: FlatBuffers wykorzystuje "padding" (wyrównywanie pamięci) oraz wskaźniki (offsets), aby umożliwić odczyt zero-copy. Sprawia to, że pliki wynikowe są większe niż w zwięzłym Protobuf.
+- Trudniejsze w użyciu API: Pisanie kodu z użyciem FlatBuffers (tzw. budowanie bufora od dołu do góry) bywa mało intuicyjne dla programistów w porównaniu do zwykłego przypisywania wartości do obiektów.
+
+#### Źródła
+- https://flatbuffers.dev/
+- https://github.com/google/flatbuffers
+
+---
